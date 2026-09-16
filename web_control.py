@@ -32,7 +32,7 @@ PAGE = """
 </head>
 <body>
   <h1>자동차 조종</h1>
-  <p>버튼을 누르는 동안 움직입니다.</p>
+  <p>방향 버튼을 누르면 이동하고, 정지 버튼으로 멈춥니다.</p>
   <div class="pad">
     <span></span>
     <button data-command="forward">전진</button>
@@ -75,16 +75,9 @@ PAGE = """
         button.addEventListener("click", stop);
         return;
       }
-      button.addEventListener("pointerdown", (event) => {
-        event.preventDefault();
-        start(command);
-      });
-      button.addEventListener("pointerup", stop);
-      button.addEventListener("pointercancel", stop);
-      button.addEventListener("pointerleave", stop);
+      button.addEventListener("click", () => start(command));
     });
 
-    window.addEventListener("blur", stop);
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) stop();
     });
