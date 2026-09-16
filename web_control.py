@@ -10,6 +10,7 @@ from groq import Groq
 from picamera2 import Picamera2
 
 from YB_Pcb_Car import YB_Pcb_Car
+from object_log_client import log_objects
 
 
 app = Flask(__name__)
@@ -287,6 +288,7 @@ def vision_worker():
             continue
         try:
             latest_objects = recognize_objects(client, frame)
+            log_objects(latest_objects)
         except Exception as error:
             latest_objects = f"분석 오류: {type(error).__name__}"
 

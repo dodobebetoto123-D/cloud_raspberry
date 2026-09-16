@@ -10,6 +10,8 @@ from luma.core.interface.serial import i2c
 from luma.core.render import canvas
 from luma.oled.device import ssd1306
 
+from object_log_client import log_objects
+
 
 MODEL = "qwen/qwen3.6-27b"
 INTERVAL_SECONDS = 5
@@ -127,6 +129,7 @@ def main():
                     json.dumps(result, ensure_ascii=False),
                     flush=True,
                 )
+                log_objects(result)
 
                 display_result(device, font, result)
 
