@@ -4,6 +4,7 @@ import base64
 import os
 
 import cv2
+from gpiozero import DistanceSensor
 from flask import Flask, Response, jsonify, render_template_string
 from groq import Groq
 from picamera2 import Picamera2
@@ -22,6 +23,9 @@ MOTOR_SPEED = 40
 CAMERA_FPS = 30
 VISION_INTERVAL_SECONDS = 2.0
 VISION_MODEL = "qwen/qwen3.8-27b"
+APPROACH_STOP_DISTANCE_CM = 20
+APPROACH_MAX_SECONDS = 10
+APPROACH_SPEED = 30
 
 camera = Picamera2()
 camera.configure(
@@ -31,7 +35,10 @@ camera.configure(
     )
 )
 camera.start()
+distance_sensor = DistanceSensor(echo=24, trigger=23, max_distance=4)
 camera_lock = threading.Lock()
+approach_lock = threading.Lock()
+approach_active = False
 latest_jpeg = None
 latest_frame = None
 latest_objects = "인식 대기 중"
@@ -50,6 +57,7 @@ PAGE = """
     .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: .7rem; margin-top: 2rem; }
     button { min-height: 4.5rem; font-size: 1.4rem; touch-action: none; user-select: none; }
     #stop { background: #d33; color: white; border: 0; }
+    #approach { background: #1769aa; color: white; border: 0; grid-column: span 3; }
     #status { margin-top: 1.5rem; font-weight: bold; }
   </style>
 </head>
@@ -68,6 +76,7 @@ PAGE = """
     <span></span>
     <button data-command="backward">후진</button>
     <span></span>
+    <button id="approach">종이컵 접근</button>
   </div>
   <div id="status">정지</div>
   <script>
@@ -101,6 +110,16 @@ PAGE = """
       send("stop");
     }
 
+    async function approach() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      const response = await fetch("/api/approach", { method: "POST" });
+      const result = await response.json();
+      status.textContent = result.status;
+    }
+
     document.querySelectorAll("[data-command]").forEach((button) => {
       const command = button.dataset.command;
       if (command === "stop") {
@@ -109,6 +128,7 @@ PAGE = """
       }
       button.addEventListener("click", () => start(command));
     });
+    document.getElementById("approach").addEventListener("click", approach);
 
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) stop();
@@ -122,9 +142,10 @@ PAGE = """
 
 
 def apply_command(command):
-    global current_command, last_command_at
+    global current_command, last_command_at, approach_active
 
     with car_lock:
+        approach_active = False
         if command == "forward":
             car.Car_Run(MOTOR_SPEED, MOTOR_SPEED)
         elif command == "backward":
@@ -143,7 +164,7 @@ def apply_command(command):
 
 
 def stop_if_command_is_old():
-    global current_command
+    global current_command, approach_active
 
     while True:
         time.sleep(0.2)
@@ -154,6 +175,39 @@ def stop_if_command_is_old():
             ):
                 car.Car_Stop()
                 current_command = "stop"
+                approach_active = False
+
+
+def approach_to_cup():
+    global approach_active, current_command, last_command_at
+
+    with approach_lock:
+        with car_lock:
+            approach_active = True
+            started_at = time.monotonic()
+
+        while time.monotonic() - started_at < APPROACH_MAX_SECONDS:
+            with car_lock:
+                if not approach_active:
+                    return
+
+                distance_cm = distance_sensor.distance * 100
+                if distance_cm <= APPROACH_STOP_DISTANCE_CM:
+                    car.Car_Stop()
+                    current_command = "stop"
+                    approach_active = False
+                    return
+
+                car.Car_Run(APPROACH_SPEED, APPROACH_SPEED)
+                current_command = "approach"
+                last_command_at = time.monotonic()
+
+            time.sleep(0.1)
+
+        with car_lock:
+            car.Car_Stop()
+            current_command = "stop"
+            approach_active = False
 
 
 def encode_for_vision(frame):
@@ -265,6 +319,19 @@ def move(command):
     return jsonify({"command": command})
 
 
+@app.post("/api/approach")
+def approach():
+    with approach_lock:
+        if approach_active:
+            return jsonify({"status": "이미 접근 중입니다."}), 409
+        worker = threading.Thread(target=approach_to_cup, daemon=True)
+        worker.start()
+    return jsonify({
+        "status": "접근 시작",
+        "stop_distance_cm": APPROACH_STOP_DISTANCE_CM,
+    })
+
+
 @app.get("/video_feed")
 def video_feed():
     return Response(
@@ -290,6 +357,7 @@ def main():
     finally:
         car.Car_Stop()
         camera.stop()
+        distance_sensor.close()
 
 
 if __name__ == "__main__":
