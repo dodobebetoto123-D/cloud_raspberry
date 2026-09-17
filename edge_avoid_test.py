@@ -2,7 +2,7 @@
 
 Verified wiring: X1 -> BCM GPIO22 (left sensor), X4 -> BCM GPIO4 (right sensor).
 The default assumes an active-low sensor. The board's existing pull configuration
-is preserved; this script does not request a gpiozero pull or active_state.
+is preserved; this script does not request an active_state.
 """
 
 import argparse
@@ -107,6 +107,15 @@ def avoid_edge(
     return True
 
 
+def make_sensor(gpio):
+    try:
+        # None preserves a pull configured by the board or external wiring.
+        return DigitalInputDevice(gpio, pull_up=None)
+    except TypeError:
+        # Older gpiozero releases may not accept pull_up=None.
+        return DigitalInputDevice(gpio)
+
+
 def main():
     args = parse_args()
     car = YB_Pcb_Car()
@@ -116,8 +125,8 @@ def main():
     try:
         # Leave pull configuration to the board/external wiring. In particular,
         # do not combine an existing pull with gpiozero's active_state setting.
-        left_edge = DigitalInputDevice(X1_GPIO, pull=None)
-        right_edge = DigitalInputDevice(X4_GPIO, pull=None)
+        left_edge = make_sensor(X1_GPIO)
+        right_edge = make_sensor(X4_GPIO)
         print(
             "Running edge avoidance for "
             f"{args.max_runtime:.1f}s; X1=GPIO22, X4=GPIO4, "

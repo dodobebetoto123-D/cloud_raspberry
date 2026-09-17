@@ -31,8 +31,9 @@ python3 web_control.py
 `edge_avoid_test.py`는 검증된 R-Avoid 센서만 사용합니다: X1은 BCM GPIO22
 (왼쪽), X4는 BCM GPIO4 (오른쪽)입니다. 기본 입력 논리는 센서가 감지할 때
 LOW인 active-low이며, 스크립트는 보드/외부 회로의 기존 pull 상태를 그대로
-사용합니다. 센서가 HIGH를 출력하면 `--active-high`를 사용하세요. X2/X3는
-연결하거나 사용하지 않습니다.
+사용하려고 `pull_up=None`을 먼저 시도하고, 이를 지원하지 않는 구버전에서는
+인자 없이 입력을 생성합니다. 센서가 HIGH를 출력하면 `--active-high`를
+사용하세요. X2/X3는 연결하거나 사용하지 않습니다.
 
 ```bash
 python3 edge_avoid_test.py --max-runtime 30
