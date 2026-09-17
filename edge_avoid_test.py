@@ -7,7 +7,7 @@ The default assumes an active-low sensor and enables the Pi's internal pull-up.
 import argparse
 import time
 
-from gpiozero import DigitalInputDevice
+import lgpio
 
 from YB_Pcb_Car import YB_Pcb_Car
 
@@ -68,14 +68,15 @@ def parse_args():
 
 def avoid_edge(
     car,
-    left_edge,
-    right_edge,
+    chip,
+    active_high,
     speed,
     reverse_time,
     turn_time,
 ):
-    left_detected = left_edge.is_active
-    right_detected = right_edge.is_active
+    active_level = 1 if active_high else 0
+    left_detected = lgpio.gpio_read(chip, X1_GPIO) == active_level
+    right_detected = lgpio.gpio_read(chip, X4_GPIO) == active_level
     if not (left_detected or right_detected):
         return False
 
@@ -104,23 +105,20 @@ def avoid_edge(
     return True
 
 
-def make_sensor(gpio, active_high):
-    return DigitalInputDevice(
-        gpio,
-        pull_up=not active_high,
-        active_state=active_high,
-    )
+def claim_sensors(chip, active_high):
+    pull = lgpio.SET_PULL_DOWN if active_high else lgpio.SET_PULL_UP
+    lgpio.gpio_claim_input(chip, X1_GPIO, pull)
+    lgpio.gpio_claim_input(chip, X4_GPIO, pull)
 
 
 def main():
     args = parse_args()
     car = YB_Pcb_Car()
-    left_edge = None
-    right_edge = None
+    chip = None
 
     try:
-        left_edge = make_sensor(X1_GPIO, args.active_high)
-        right_edge = make_sensor(X4_GPIO, args.active_high)
+        chip = lgpio.gpiochip_open(0)
+        claim_sensors(chip, args.active_high)
         print(
             "Running edge avoidance for "
             f"{args.max_runtime:.1f}s; X1=GPIO22, X4=GPIO4, "
@@ -131,8 +129,8 @@ def main():
         while time.monotonic() < deadline:
             if not avoid_edge(
                 car,
-                left_edge,
-                right_edge,
+                chip,
+                args.active_high,
                 args.speed,
                 args.reverse_time,
                 args.turn_time,
@@ -141,10 +139,8 @@ def main():
             time.sleep(0.01)
     finally:
         car.Car_Stop()
-        if left_edge is not None:
-            left_edge.close()
-        if right_edge is not None:
-            right_edge.close()
+        if chip is not None:
+            lgpio.gpiochip_close(chip)
         print("Car stopped; edge sensors released.", flush=True)
 
 

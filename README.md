@@ -31,9 +31,11 @@ python3 web_control.py
 `edge_avoid_test.py`는 검증된 R-Avoid 센서만 사용합니다: X1은 BCM GPIO22
 (왼쪽), X4는 BCM GPIO4 (오른쪽)입니다. 기본 입력 논리는 센서가 감지할 때
 LOW인 active-low이며, 스크립트는 보드/외부 회로의 기존 pull 상태를 그대로
-사용하지 않고 gpiozero 설정을 명시합니다: `pull_up=True, active_state=False`.
-센서가 HIGH를 출력하면 `--active-high`로 `pull_up=False,
-active_state=True`를 사용합니다. X2/X3는 연결하거나 사용하지 않습니다.
+사용하지 않고 `lgpio`로 직접 설정합니다: `SET_PULL_UP`을 적용하고
+`gpio_read(...) == 0`을 감지로 처리합니다. 센서가 HIGH를 출력하면
+`--active-high`로 `SET_PULL_DOWN`과 `gpio_read(...) == 1`을 사용합니다.
+X2/X3는 연결하거나 사용하지 않습니다. `lgpio`는 Raspberry Pi OS의
+Python 패키지로 설치되어 있어야 합니다.
 
 ```bash
 python3 edge_avoid_test.py --max-runtime 30
