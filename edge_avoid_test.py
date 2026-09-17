@@ -1,8 +1,7 @@
 """BottleSumo edge-avoidance test using only verified R-Avoid sensors X1 and X4.
 
 Verified wiring: X1 -> BCM GPIO22 (left sensor), X4 -> BCM GPIO4 (right sensor).
-The default assumes an active-low sensor. The board's existing pull configuration
-is preserved; this script does not request an active_state.
+The default assumes an active-low sensor and enables the Pi's internal pull-up.
 """
 
 import argparse
@@ -71,14 +70,12 @@ def avoid_edge(
     car,
     left_edge,
     right_edge,
-    active_high,
     speed,
     reverse_time,
     turn_time,
 ):
-    active_level = 1 if active_high else 0
-    left_detected = left_edge.value == active_level
-    right_detected = right_edge.value == active_level
+    left_detected = left_edge.is_active
+    right_detected = right_edge.is_active
     if not (left_detected or right_detected):
         return False
 
@@ -107,13 +104,12 @@ def avoid_edge(
     return True
 
 
-def make_sensor(gpio):
-    try:
-        # None preserves a pull configured by the board or external wiring.
-        return DigitalInputDevice(gpio, pull_up=None)
-    except TypeError:
-        # Older gpiozero releases may not accept pull_up=None.
-        return DigitalInputDevice(gpio)
+def make_sensor(gpio, active_high):
+    return DigitalInputDevice(
+        gpio,
+        pull_up=not active_high,
+        active_state=active_high,
+    )
 
 
 def main():
@@ -123,10 +119,8 @@ def main():
     right_edge = None
 
     try:
-        # Leave pull configuration to the board/external wiring. In particular,
-        # do not combine an existing pull with gpiozero's active_state setting.
-        left_edge = make_sensor(X1_GPIO)
-        right_edge = make_sensor(X4_GPIO)
+        left_edge = make_sensor(X1_GPIO, args.active_high)
+        right_edge = make_sensor(X4_GPIO, args.active_high)
         print(
             "Running edge avoidance for "
             f"{args.max_runtime:.1f}s; X1=GPIO22, X4=GPIO4, "
@@ -139,7 +133,6 @@ def main():
                 car,
                 left_edge,
                 right_edge,
-                args.active_high,
                 args.speed,
                 args.reverse_time,
                 args.turn_time,
