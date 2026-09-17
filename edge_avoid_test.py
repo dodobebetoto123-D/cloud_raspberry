@@ -1,7 +1,8 @@
 """BottleSumo edge-avoidance test using only verified R-Avoid sensors X1 and X4.
 
 Verified wiring: X1 -> BCM GPIO22 (left sensor), X4 -> BCM GPIO4 (right sensor).
-The default assumes an active-low sensor with the Pi's internal pull-up enabled.
+The default assumes an active-low sensor. The board's existing pull configuration
+is preserved; this script does not request a gpiozero pull or active_state.
 """
 
 import argparse
@@ -66,9 +67,18 @@ def parse_args():
     return args
 
 
-def avoid_edge(car, left_edge, right_edge, speed, reverse_time, turn_time):
-    left_detected = left_edge.is_active
-    right_detected = right_edge.is_active
+def avoid_edge(
+    car,
+    left_edge,
+    right_edge,
+    active_high,
+    speed,
+    reverse_time,
+    turn_time,
+):
+    active_level = 1 if active_high else 0
+    left_detected = left_edge.value == active_level
+    right_detected = right_edge.value == active_level
     if not (left_detected or right_detected):
         return False
 
@@ -99,22 +109,15 @@ def avoid_edge(car, left_edge, right_edge, speed, reverse_time, turn_time):
 
 def main():
     args = parse_args()
-    pull_up = not args.active_high
     car = YB_Pcb_Car()
     left_edge = None
     right_edge = None
 
     try:
-        left_edge = DigitalInputDevice(
-            X1_GPIO,
-            pull_up=pull_up,
-            active_state=args.active_high,
-        )
-        right_edge = DigitalInputDevice(
-            X4_GPIO,
-            pull_up=pull_up,
-            active_state=args.active_high,
-        )
+        # Leave pull configuration to the board/external wiring. In particular,
+        # do not combine an existing pull with gpiozero's active_state setting.
+        left_edge = DigitalInputDevice(X1_GPIO, pull=None)
+        right_edge = DigitalInputDevice(X4_GPIO, pull=None)
         print(
             "Running edge avoidance for "
             f"{args.max_runtime:.1f}s; X1=GPIO22, X4=GPIO4, "
@@ -127,6 +130,7 @@ def main():
                 car,
                 left_edge,
                 right_edge,
+                args.active_high,
                 args.speed,
                 args.reverse_time,
                 args.turn_time,
