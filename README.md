@@ -37,6 +37,20 @@ LOW인 active-low이며, 스크립트는 보드/외부 회로의 기존 pull 상
 X2/X3는 연결하거나 사용하지 않습니다. `lgpio`는 Raspberry Pi OS의
 Python 패키지로 설치되어 있어야 합니다.
 
+먼저 바퀴를 띄운 상태에서 모터가 전혀 구동되지 않는 진단을 실행하세요.
+기본 active-low 진단은 다음과 같습니다.
+
+```bash
+python3 edge_avoid_test.py --diagnose --max-runtime 30
+```
+
+센서가 평상시 `clear`이고 가장자리를 가리킬 때 해당 센서가 `EDGE`로
+바뀌는지 확인한 뒤에만 주행 테스트를 하세요. active-high 센서는
+`--active-high --diagnose`를 사용합니다. 주행 모드도 처음에 두 센서를
+읽습니다. 초기 센서가 EDGE이거나 claim/read 오류가 발생하면 모터를
+구동하지 않고 정지 후 종료합니다. 주행 테스트 역시 먼저 바퀴를 띄워
+실행하세요.
+
 ```bash
 python3 edge_avoid_test.py --max-runtime 30
 # active-high 센서:

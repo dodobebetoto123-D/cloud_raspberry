@@ -35,6 +35,11 @@ def parse_args():
     )
     parser.set_defaults(active_high=False)
     parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Read and print both sensors without driving the motors.",
+    )
+    parser.add_argument(
         "--max-runtime",
         type=float,
         default=30.0,
@@ -66,6 +71,22 @@ def parse_args():
     return args
 
 
+def read_sensors(chip, active_high):
+    left_value = lgpio.gpio_read(chip, X1_GPIO)
+    right_value = lgpio.gpio_read(chip, X4_GPIO)
+    if left_value not in (0, 1) or right_value not in (0, 1):
+        raise RuntimeError(
+            f"Unexpected sensor value: X1={left_value}, X4={right_value}"
+        )
+    active_level = 1 if active_high else 0
+    return (
+        left_value,
+        right_value,
+        left_value == active_level,
+        right_value == active_level,
+    )
+
+
 def avoid_edge(
     car,
     chip,
@@ -74,9 +95,7 @@ def avoid_edge(
     reverse_time,
     turn_time,
 ):
-    active_level = 1 if active_high else 0
-    left_detected = lgpio.gpio_read(chip, X1_GPIO) == active_level
-    right_detected = lgpio.gpio_read(chip, X4_GPIO) == active_level
+    _, _, left_detected, right_detected = read_sensors(chip, active_high)
     if not (left_detected or right_detected):
         return False
 
@@ -113,12 +132,37 @@ def claim_sensors(chip, active_high):
 
 def main():
     args = parse_args()
-    car = YB_Pcb_Car()
+    car = None
     chip = None
 
     try:
+        car = YB_Pcb_Car()
         chip = lgpio.gpiochip_open(0)
         claim_sensors(chip, args.active_high)
+        initial = read_sensors(chip, args.active_high)
+        print(
+            f"Initial sensors: X1={initial[0]} "
+            f"({'EDGE' if initial[2] else 'clear'}), "
+            f"X4={initial[1]} "
+            f"({'EDGE' if initial[3] else 'clear'}).",
+            flush=True,
+        )
+        if args.diagnose:
+            print("Diagnostic mode: motors are disabled.", flush=True)
+            deadline = time.monotonic() + args.max_runtime
+            while time.monotonic() < deadline:
+                values = read_sensors(chip, args.active_high)
+                print(
+                    f"X1={values[0]} ({'EDGE' if values[2] else 'clear'}), "
+                    f"X4={values[1]} ({'EDGE' if values[3] else 'clear'})",
+                    flush=True,
+                )
+                time.sleep(0.25)
+            return
+        if initial[2] or initial[3]:
+            raise RuntimeError(
+                "A sensor is already detecting an edge; refusing to drive."
+            )
         print(
             "Running edge avoidance for "
             f"{args.max_runtime:.1f}s; X1=GPIO22, X4=GPIO4, "
@@ -138,7 +182,8 @@ def main():
                 car.Car_Run(args.speed, args.speed)
             time.sleep(0.01)
     finally:
-        car.Car_Stop()
+        if car is not None:
+            car.Car_Stop()
         if chip is not None:
             lgpio.gpiochip_close(chip)
         print("Car stopped; edge sensors released.", flush=True)
