@@ -60,3 +60,30 @@ python3 edge_avoid_test.py --active-high --max-runtime 30
 감지하면 즉시 정지한 뒤 잠시 후진하고, X1이면 우회전/X4이면 좌회전하여
 중앙을 향합니다. 기본 최대 실행 시간은 30초이며 Ctrl+C, 오류, 시간 만료
 모두 모터를 정지시킵니다. GPIO 입력은 3.3V 논리와 공통 GND로 연결하세요.
+
+## BottleSumo 타임 트라이얼 자율 주행
+
+`bottlesumo.py`는 2026 시즌 룰북 기준 타임 트라이얼용 자율 주행 프로그램입니다.
+시작 후 3초 대기(룰 필수) → 제자리 회전하며 초음파로 병 탐색 →
+감지되면 돌진해서 밀기 → 엣지 감지 시 즉시 정지·후진·중앙 회전 →
+밀기 후 중앙으로 후퇴(병 낙하 뒤 3초 생존 확보) 순서로 동작합니다.
+기본 최대 실행 시간은 115초이며(제한 120초), 시간 만료 시 정지 후 종료합니다.
+
+```bash
+pip install -r requirements.txt
+# 센서 진단 (모터 미구동)
+python3 bottlesumo.py --diagnose --max-runtime 30
+# 바퀴를 띄운 상태로 먼저 테스트
+python3 bottlesumo.py --max-runtime 30
+# 실전 (속도 튜닝 예시)
+python3 bottlesumo.py --search-speed 60 --push-speed 150
+# 물리 시작 버튼 사용 시 (예: GPIO17에 버튼 연결)
+python3 bottlesumo.py --start-gpio 17
+```
+
+주의: Pi 기반 로봇은 Unlimited 디비전으로 출전해야 합니다
+(Classic 디비전은 LEGO/VEX IQ 부품 전용). 로봇에 팀 ID와
+"Front" 표시(센서가 있는 면)를 부착하세요.
+
+> 참고: 아직 실제 파이·센서·모터에서 검증되지 않은 초안입니다.
+> 속도와 임계값은 실측 후 튜닝이 필요합니다.

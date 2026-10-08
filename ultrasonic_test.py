@@ -17,6 +17,7 @@ try:
     print("초음파 측정을 시작합니다. 종료: Ctrl+C", flush=True)
 
     while True:
+        # gpiozero의 distance는 이미 미터 단위이므로 *100으로 cm 환산
         distance_cm = sensor.distance * 100
         print(f"거리: {distance_cm:.1f} cm", flush=True)
         time.sleep(0.5)

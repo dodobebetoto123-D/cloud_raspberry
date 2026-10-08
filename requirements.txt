@@ -1,0 +1,4 @@
+# BottleSumo 자율 주행 (bottlesumo.py)용 의존성
+# Raspberry Pi OS에 기본 포함된 경우가 많지만 명시해 둠
+gpiozero
+lgpio
