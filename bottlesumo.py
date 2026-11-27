@@ -50,7 +50,7 @@ SCAN_STEP_SECONDS = 0.3
 SCAN_STEPS = 12
 PUSH_TIMEOUT_SECONDS = 2.0
 REVERSE_SECONDS = 0.4
-EDGE_REVERSE_SPEED = 60
+EDGE_REVERSE_SPEED = 100
 EDGE_REVERSE_SECONDS = 3.0  # 후진 시간: 실제 후진 거리를 측정해 보정
 RECOVER_TURN_SECONDS = 0.5
 REPOSITION_SECONDS = 0.6
@@ -112,6 +112,7 @@ def avoid_edge(car, chip, active_high, detected=None):
     print(f"엣지 감지 (X1={'EDGE' if left else 'clear'}, "
           f"X4={'EDGE' if right else 'clear'}): 약 10cm 후퇴 후 회전", flush=True)
     car.Car_Stop()
+    time.sleep(0.2)  # 전진 정지 후 방향 전환 대기
     car.Car_Back(EDGE_REVERSE_SPEED, EDGE_REVERSE_SPEED)
     time.sleep(EDGE_REVERSE_SECONDS)
     car.Car_Stop()
