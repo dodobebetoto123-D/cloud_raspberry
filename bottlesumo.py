@@ -10,9 +10,9 @@
 
 전략:
 1. 3초 대기 후 시작 (룰 필수)
-2. 제자리에서 최대 한 바퀴 회전하며 초음파 센서로 병 탐색 (회전 시간 실측 보정)
+2. 저속 직진하며 전방 초음파 센서로 병 탐색 (제자리 탐색 회전 없음)
 3. 병이 감지되면 돌진해서 밀기 (엣지 감시 병행)
-4. 엣지 감지 시 즉시 정지, 약 10cm 후진(실측 보정 필요) 후 중앙을 향해 회전
+4. 엣지 감지 시 정지, 짧게 후진 후 회전. 감지가 지속되면 정지 상태로 정상 복귀 대기
 5. 밀기 동작 후에는 중앙 쪽으로 후퇴 (3초 생존 확보)
 6. --max-runtime(기본 115초)이 되면 정지 후 종료
 
@@ -46,7 +46,6 @@ TIME_LIMIT_SECONDS = 120.0  # 타임 트라이얼 제한 시간
 SEARCH_SPEED = 25
 PUSH_SPEED = 55
 TURN_SPEED = 30
-SCAN_FULL_TURN_SECONDS = 3.6  # 제자리 360도 회전 목표: 실제 회전 시간을 측정해 보정
 PUSH_TIMEOUT_SECONDS = 2.0
 REVERSE_SECONDS = 0.4
 EDGE_REVERSE_SPEED = 35
@@ -73,15 +72,11 @@ def parse_args():
                         help="최대 실행 시간(초). 120초 제한 안에 끝나야 함 (기본: 115)")
     parser.add_argument("--search-speed", type=int, default=SEARCH_SPEED)
     parser.add_argument("--push-speed", type=int, default=PUSH_SPEED)
-    parser.add_argument("--scan-turn-time", type=float, default=SCAN_FULL_TURN_SECONDS,
-                        help="물통 탐색 시 제자리 한 바퀴 회전 목표 시간(초)")
     parser.add_argument("--start-gpio", type=int, default=None,
                         help="물리 시작 버튼 GPIO 번호 (지정하면 버튼 입력 대기 후 3초 대기)")
     args = parser.parse_args()
     if not 0 < args.max_runtime <= TIME_LIMIT_SECONDS:
         parser.error("max-runtime은 0보다 크고 120 이하여야 합니다.")
-    if not 0 < args.scan_turn_time <= TIME_LIMIT_SECONDS:
-        parser.error("scan-turn-time은 0보다 크고 120 이하여야 합니다.")
     for name in ("search_speed", "push_speed"):
         if not 0 <= getattr(args, name) <= 255:
             parser.error(f"{name}는 0-255 사이여야 합니다.")
@@ -107,7 +102,21 @@ def read_distance_cm(sensor):
     return statistics.median(samples)
 
 
-def avoid_edge(car, chip, active_high, detected=None):
+def wait_for_clear(car, chip, active_high, deadline):
+    """모터 정지 상태에서 두 센서가 정상으로 돌아올 때까지 대기한다."""
+    car.Car_Stop()
+    if not any(read_edge(chip, active_high)):
+        return time.monotonic() < deadline
+    print("엣지 감지 지속: 모터 정지, 바닥 감지 복귀 대기", flush=True)
+    while time.monotonic() < deadline:
+        if not any(read_edge(chip, active_high)):
+            print("바닥 감지 정상 복귀", flush=True)
+            return True
+        time.sleep(EDGE_POLL_SECONDS)
+    return False
+
+
+def avoid_edge(car, chip, active_high, deadline, detected=None):
     """엣지 감지 시 정지, 약 10cm 후진 후 중앙을 향해 회전."""
     left, right = detected if detected is not None else read_edge(chip, active_high)
     if not (left or right):
@@ -116,12 +125,14 @@ def avoid_edge(car, chip, active_high, detected=None):
           f"X4={'EDGE' if right else 'clear'}): 약 10cm 후퇴 후 회전", flush=True)
     car.Car_Stop()
     time.sleep(0.2)  # 전진 정지 후 방향 전환 대기
+    if time.monotonic() >= deadline:
+        return True
     car.Car_Back(EDGE_REVERSE_SPEED, EDGE_REVERSE_SPEED)
-    time.sleep(EDGE_REVERSE_SECONDS)
+    time.sleep(min(EDGE_REVERSE_SECONDS, max(0, deadline - time.monotonic())))
     car.Car_Stop()
 
-    if any(read_edge(chip, active_high)):
-        raise RuntimeError("후진 후에도 엣지가 감지됩니다. 안전을 위해 주행을 종료합니다.")
+    if not wait_for_clear(car, chip, active_high, deadline):
+        return True
 
     if right and not left:
         car.Car_Left(TURN_SPEED, TURN_SPEED)
@@ -132,33 +143,14 @@ def avoid_edge(car, chip, active_high, detected=None):
     return True
 
 
-def scan_for_bottle(car, sensor, chip, active_high, deadline, turn_time):
-    """제자리에서 최대 한 바퀴 연속 회전하며 물통을 탐색한다."""
+def scan_for_bottle(sensor, chip, active_high, deadline):
+    """전방 초음파로만 물통을 확인한다. 탐색 회전은 하지 않는다."""
     if time.monotonic() >= deadline or any(read_edge(chip, active_high)):
         return False
     distance = read_distance_cm(sensor)
     if time.monotonic() >= deadline or any(read_edge(chip, active_high)):
         return False
-    if distance < BOTTLE_DETECT_CM:
-        print("정면 물통 감지: 돌진", flush=True)
-        return True
-
-    print(f"제자리 한 바퀴 탐색 시작 (최대 {turn_time:.1f}초)", flush=True)
-    try:
-        car.Car_Right(TURN_SPEED, TURN_SPEED)
-        scan_deadline = min(deadline, time.monotonic() + turn_time)
-        while time.monotonic() < scan_deadline:
-            if any(read_edge(chip, active_high)):
-                return False
-            distance = read_distance_cm(sensor)
-            if time.monotonic() >= deadline or any(read_edge(chip, active_high)):
-                return False
-            if distance < BOTTLE_DETECT_CM:
-                print("회전 중 물통 감지: 돌진", flush=True)
-                return True
-    finally:
-        car.Car_Stop()
-    return False
+    return distance < BOTTLE_DETECT_CM
 
 
 def push_bottle(car, sensor, chip, active_high, push_speed, deadline):
@@ -232,33 +224,36 @@ def main():
         print(f"시작 {START_DELAY_SECONDS}초 대기 중...", flush=True)
         time.sleep(START_DELAY_SECONDS)
 
-        left, right = read_edge(chip, args.active_high)
-        if left or right:
-            raise RuntimeError("시작 위치에서 엣지가 감지됩니다. 로봇을 중앙에 두세요.")
-
-        print(f"주행 시작 (최대 {args.max_runtime:.0f}초)", flush=True)
         deadline = time.monotonic() + args.max_runtime
+        if not wait_for_clear(car, chip, args.active_high, deadline):
+            return
+        print(f"주행 시작 (최대 {args.max_runtime:.0f}초)", flush=True)
         while time.monotonic() < deadline:
-            if avoid_edge(car, chip, args.active_high):
+            if avoid_edge(car, chip, args.active_high, deadline):
                 continue
-            if scan_for_bottle(car, sensor, chip, args.active_high, deadline,
-                               args.scan_turn_time):
+            if scan_for_bottle(sensor, chip, args.active_high, deadline):
                 detected = push_bottle(car, sensor, chip, args.active_high,
                                        args.push_speed, deadline)
                 if detected is not None:
-                    avoid_edge(car, chip, args.active_high, detected)
+                    avoid_edge(car, chip, args.active_high, deadline, detected)
                 else:
                     recover_to_center(car, args.search_speed)
             else:
-                # 한 바퀴 돌아도 병이 없으면 앞으로 이동 후 다시 탐색
+                # 물통이 없으면 짧게 직진하며 엣지를 계속 확인
                 if time.monotonic() >= deadline:
                     break
                 left, right = read_edge(chip, args.active_high)
                 if left or right:
                     continue
                 car.Car_Run(args.search_speed, args.search_speed)
-                time.sleep(REPOSITION_SECONDS)
-                car.Car_Stop()
+                move_deadline = min(deadline, time.monotonic() + REPOSITION_SECONDS)
+                try:
+                    while time.monotonic() < move_deadline:
+                        if any(read_edge(chip, args.active_high)):
+                            break
+                        time.sleep(EDGE_POLL_SECONDS)
+                finally:
+                    car.Car_Stop()
     finally:
         if car is not None:
             car.Car_Stop()
