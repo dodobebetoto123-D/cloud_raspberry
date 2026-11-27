@@ -10,7 +10,7 @@
 
 전략:
 1. 3초 대기 후 시작 (룰 필수)
-2. 제자리 회전하며 초음파 센서로 병 탐색
+2. 제자리에서 최대 한 바퀴 회전하며 초음파 센서로 병 탐색 (회전 시간 실측 보정)
 3. 병이 감지되면 돌진해서 밀기 (엣지 감시 병행)
 4. 엣지 감지 시 즉시 정지, 약 10cm 후진(실측 보정 필요) 후 중앙을 향해 회전
 5. 밀기 동작 후에는 중앙 쪽으로 후퇴 (3초 생존 확보)
@@ -46,12 +46,11 @@ TIME_LIMIT_SECONDS = 120.0  # 타임 트라이얼 제한 시간
 SEARCH_SPEED = 60
 PUSH_SPEED = 150
 TURN_SPEED = 80
-SCAN_STEP_SECONDS = 0.3
-SCAN_STEPS = 12
+SCAN_FULL_TURN_SECONDS = 3.6  # 제자리 360도 회전 목표: 실제 회전 시간을 측정해 보정
 PUSH_TIMEOUT_SECONDS = 2.0
 REVERSE_SECONDS = 0.4
 EDGE_REVERSE_SPEED = 100
-EDGE_REVERSE_SECONDS = 3.0  # 후진 시간: 실제 후진 거리를 측정해 보정
+EDGE_REVERSE_SECONDS = 1.0  # 후진 시간: 실제 후진 거리를 측정해 보정
 RECOVER_TURN_SECONDS = 0.5
 REPOSITION_SECONDS = 0.6
 BOTTLE_DETECT_CM = 70.0     # 이 거리 안에 병이 있으면 돌진
@@ -74,11 +73,15 @@ def parse_args():
                         help="최대 실행 시간(초). 120초 제한 안에 끝나야 함 (기본: 115)")
     parser.add_argument("--search-speed", type=int, default=SEARCH_SPEED)
     parser.add_argument("--push-speed", type=int, default=PUSH_SPEED)
+    parser.add_argument("--scan-turn-time", type=float, default=SCAN_FULL_TURN_SECONDS,
+                        help="물통 탐색 시 제자리 한 바퀴 회전 목표 시간(초)")
     parser.add_argument("--start-gpio", type=int, default=None,
                         help="물리 시작 버튼 GPIO 번호 (지정하면 버튼 입력 대기 후 3초 대기)")
     args = parser.parse_args()
     if not 0 < args.max_runtime <= TIME_LIMIT_SECONDS:
         parser.error("max-runtime은 0보다 크고 120 이하여야 합니다.")
+    if not 0 < args.scan_turn_time <= TIME_LIMIT_SECONDS:
+        parser.error("scan-turn-time은 0보다 크고 120 이하여야 합니다.")
     for name in ("search_speed", "push_speed"):
         if not 0 <= getattr(args, name) <= 255:
             parser.error(f"{name}는 0-255 사이여야 합니다.")
@@ -129,21 +132,33 @@ def avoid_edge(car, chip, active_high, detected=None):
     return True
 
 
-def scan_for_bottle(car, sensor, chip, active_high, deadline):
-    """제자리 회전하며 병 탐색. 감지되면 True."""
-    for _ in range(SCAN_STEPS):
-        if time.monotonic() >= deadline:
-            return False
-        left, right = read_edge(chip, active_high)
-        if left or right:
-            return False
-        if read_distance_cm(sensor) < BOTTLE_DETECT_CM:
-            print("병 감지: 돌진", flush=True)
-            return True
+def scan_for_bottle(car, sensor, chip, active_high, deadline, turn_time):
+    """제자리에서 최대 한 바퀴 연속 회전하며 물통을 탐색한다."""
+    if time.monotonic() >= deadline or any(read_edge(chip, active_high)):
+        return False
+    distance = read_distance_cm(sensor)
+    if time.monotonic() >= deadline or any(read_edge(chip, active_high)):
+        return False
+    if distance < BOTTLE_DETECT_CM:
+        print("정면 물통 감지: 돌진", flush=True)
+        return True
+
+    print(f"제자리 한 바퀴 탐색 시작 (최대 {turn_time:.1f}초)", flush=True)
+    try:
         car.Car_Right(TURN_SPEED, TURN_SPEED)
-        time.sleep(SCAN_STEP_SECONDS)
+        scan_deadline = min(deadline, time.monotonic() + turn_time)
+        while time.monotonic() < scan_deadline:
+            if any(read_edge(chip, active_high)):
+                return False
+            distance = read_distance_cm(sensor)
+            if time.monotonic() >= deadline or any(read_edge(chip, active_high)):
+                return False
+            if distance < BOTTLE_DETECT_CM:
+                print("회전 중 물통 감지: 돌진", flush=True)
+                return True
+    finally:
         car.Car_Stop()
-    return read_distance_cm(sensor) < BOTTLE_DETECT_CM
+    return False
 
 
 def push_bottle(car, sensor, chip, active_high, push_speed, deadline):
@@ -226,7 +241,8 @@ def main():
         while time.monotonic() < deadline:
             if avoid_edge(car, chip, args.active_high):
                 continue
-            if scan_for_bottle(car, sensor, chip, args.active_high, deadline):
+            if scan_for_bottle(car, sensor, chip, args.active_high, deadline,
+                               args.scan_turn_time):
                 detected = push_bottle(car, sensor, chip, args.active_high,
                                        args.push_speed, deadline)
                 if detected is not None:
@@ -235,6 +251,8 @@ def main():
                     recover_to_center(car, args.search_speed)
             else:
                 # 한 바퀴 돌아도 병이 없으면 앞으로 이동 후 다시 탐색
+                if time.monotonic() >= deadline:
+                    break
                 left, right = read_edge(chip, args.active_high)
                 if left or right:
                     continue
