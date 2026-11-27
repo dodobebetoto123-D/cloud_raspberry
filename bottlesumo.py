@@ -12,7 +12,7 @@
 1. 3초 대기 후 시작 (룰 필수)
 2. 제자리 회전하며 초음파 센서로 병 탐색
 3. 병이 감지되면 돌진해서 밀기 (엣지 감시 병행)
-4. 엣지 감지 시 즉시 정지, 후진 후 중앙을 향해 회전
+4. 엣지 감지 시 즉시 정지, 약 10cm 후진(실측 보정 필요) 후 중앙을 향해 회전
 5. 밀기 동작 후에는 중앙 쪽으로 후퇴 (3초 생존 확보)
 6. --max-runtime(기본 115초)이 되면 정지 후 종료
 
@@ -50,6 +50,8 @@ SCAN_STEP_SECONDS = 0.3
 SCAN_STEPS = 12
 PUSH_TIMEOUT_SECONDS = 2.0
 REVERSE_SECONDS = 0.4
+EDGE_REVERSE_SPEED = 60
+EDGE_REVERSE_SECONDS = 1.0  # 약 10cm 목표의 초기값: 실제 후진 거리를 측정해 보정
 RECOVER_TURN_SECONDS = 0.5
 REPOSITION_SECONDS = 0.6
 BOTTLE_DETECT_CM = 70.0     # 이 거리 안에 병이 있으면 돌진
@@ -102,25 +104,24 @@ def read_distance_cm(sensor):
     return statistics.median(samples)
 
 
-def avoid_edge(car, chip, active_high, search_speed):
-    """엣지가 감지되면 정지, 후진, 중앙을 향해 회전. 회피했으면 True."""
-    left, right = read_edge(chip, active_high)
+def avoid_edge(car, chip, active_high, detected=None):
+    """엣지 감지 시 정지, 약 10cm 후진 후 중앙을 향해 회전."""
+    left, right = detected if detected is not None else read_edge(chip, active_high)
     if not (left or right):
         return False
     print(f"엣지 감지 (X1={'EDGE' if left else 'clear'}, "
-          f"X4={'EDGE' if right else 'clear'}): 후퇴 후 중앙으로 회전", flush=True)
+          f"X4={'EDGE' if right else 'clear'}): 약 10cm 후퇴 후 회전", flush=True)
     car.Car_Stop()
-    car.Car_Back(search_speed, search_speed)
-    time.sleep(REVERSE_SECONDS)
+    car.Car_Back(EDGE_REVERSE_SPEED, EDGE_REVERSE_SPEED)
+    time.sleep(EDGE_REVERSE_SECONDS)
     car.Car_Stop()
-    if left and not right:
-        car.Car_Right(TURN_SPEED, TURN_SPEED)
-    elif right and not left:
+
+    if any(read_edge(chip, active_high)):
+        raise RuntimeError("후진 후에도 엣지가 감지됩니다. 안전을 위해 주행을 종료합니다.")
+
+    if right and not left:
         car.Car_Left(TURN_SPEED, TURN_SPEED)
     else:
-        car.Car_Back(search_speed, search_speed)
-        time.sleep(REVERSE_SECONDS)
-        car.Car_Stop()
         car.Car_Right(TURN_SPEED, TURN_SPEED)
     time.sleep(RECOVER_TURN_SECONDS)
     car.Car_Stop()
@@ -145,7 +146,7 @@ def scan_for_bottle(car, sensor, chip, active_high, deadline):
 
 
 def push_bottle(car, sensor, chip, active_high, push_speed, deadline):
-    """엣지를 감시하며 전진으로 병을 밀기. 병이 떨어지거나 엣지가 보이면 중단."""
+    """병을 밀다가 엣지를 감지하면 감지 상태를 반환하고, 그 외에는 None을 반환."""
     car.Car_Stop()
     started = time.monotonic()
     while time.monotonic() - started < PUSH_TIMEOUT_SECONDS:
@@ -154,13 +155,15 @@ def push_bottle(car, sensor, chip, active_high, push_speed, deadline):
         left, right = read_edge(chip, active_high)
         if left or right:
             print("밀기 중 엣지 감지: 중단", flush=True)
-            break
+            car.Car_Stop()
+            return left, right
         if read_distance_cm(sensor) > BOTTLE_LOST_CM:
             print("병이 사라짐(낙하 추정): 밀기 중단", flush=True)
             break
         car.Car_Run(push_speed, push_speed)
         time.sleep(EDGE_POLL_SECONDS)
     car.Car_Stop()
+    return None
 
 
 def recover_to_center(car, search_speed):
@@ -220,12 +223,15 @@ def main():
         print(f"주행 시작 (최대 {args.max_runtime:.0f}초)", flush=True)
         deadline = time.monotonic() + args.max_runtime
         while time.monotonic() < deadline:
-            if avoid_edge(car, chip, args.active_high, args.search_speed):
+            if avoid_edge(car, chip, args.active_high):
                 continue
             if scan_for_bottle(car, sensor, chip, args.active_high, deadline):
-                push_bottle(car, sensor, chip, args.active_high,
-                            args.push_speed, deadline)
-                recover_to_center(car, args.search_speed)
+                detected = push_bottle(car, sensor, chip, args.active_high,
+                                       args.push_speed, deadline)
+                if detected is not None:
+                    avoid_edge(car, chip, args.active_high, detected)
+                else:
+                    recover_to_center(car, args.search_speed)
             else:
                 # 한 바퀴 돌아도 병이 없으면 앞으로 이동 후 다시 탐색
                 left, right = read_edge(chip, args.active_high)
