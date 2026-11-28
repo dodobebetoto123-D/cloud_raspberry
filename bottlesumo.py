@@ -53,7 +53,6 @@ EDGE_REVERSE_SECONDS = 1.0  # 후진 시간: 실제 후진 거리를 측정해 �
 RECOVER_TURN_SECONDS = 0.5
 REPOSITION_SECONDS = 0.6
 BOTTLE_DETECT_CM = 70.0     # 이 거리 안에 병이 있으면 돌진
-BOTTLE_LOST_CM = 90.0       # 밀기 중 이보다 멀어지면 병이 떨어진 것으로 판단
 ULTRASONIC_SAMPLES = 3
 EDGE_POLL_SECONDS = 0.05
 
@@ -153,7 +152,7 @@ def scan_for_bottle(sensor, chip, active_high, deadline):
     return distance < BOTTLE_DETECT_CM
 
 
-def push_bottle(car, sensor, chip, active_high, push_speed, deadline):
+def push_bottle(car, chip, active_high, push_speed, deadline):
     """병을 밀다가 엣지를 감지하면 감지 상태를 반환하고, 그 외에는 None을 반환."""
     car.Car_Stop()
     started = time.monotonic()
@@ -165,9 +164,6 @@ def push_bottle(car, sensor, chip, active_high, push_speed, deadline):
             print("밀기 중 엣지 감지: 중단", flush=True)
             car.Car_Stop()
             return left, right
-        if read_distance_cm(sensor) > BOTTLE_LOST_CM:
-            print("병이 사라짐(낙하 추정): 밀기 중단", flush=True)
-            break
         car.Car_Run(push_speed, push_speed)
         time.sleep(EDGE_POLL_SECONDS)
     car.Car_Stop()
@@ -232,7 +228,7 @@ def main():
             if avoid_edge(car, chip, args.active_high, deadline):
                 continue
             if scan_for_bottle(sensor, chip, args.active_high, deadline):
-                detected = push_bottle(car, sensor, chip, args.active_high,
+                detected = push_bottle(car, chip, args.active_high,
                                        args.push_speed, deadline)
                 if detected is not None:
                     avoid_edge(car, chip, args.active_high, deadline, detected)
