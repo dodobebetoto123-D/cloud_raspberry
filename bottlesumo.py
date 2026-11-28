@@ -12,7 +12,7 @@
 1. 3초 대기 후 시작 (룰 필수)
 2. 저속 직진하며 전방 초음파 센서로 병 탐색 (제자리 탐색 회전 없음)
 3. 병이 감지되면 돌진해서 밀기 (엣지 감시 병행)
-4. 엣지 감지 시 정지, 짧게 후진 후 회전. 감지가 지속되면 정지 상태로 정상 복귀 대기
+4. 엣지 감지 시 정지, 후진 후 빠르게 제자리 한 바퀴 회전. 감지가 지속되면 정지 상태로 정상 복귀 대기
 5. 밀기 동작 후에는 중앙 쪽으로 후퇴 (3초 생존 확보)
 6. --max-runtime(기본 115초)이 되면 정지 후 종료
 
@@ -50,6 +50,8 @@ PUSH_TIMEOUT_SECONDS = 2.0
 REVERSE_SECONDS = 0.4
 EDGE_REVERSE_SPEED = 35
 EDGE_REVERSE_SECONDS = 3.0  # 후진 시간: 실제 후진 거리를 측정해 보정
+EDGE_TURN_SPEED = 60
+EDGE_FULL_TURN_SECONDS = 3.6  # 360도 회전 목표: 배터리 환경에서 실측 보정
 RECOVER_TURN_SECONDS = 0.5
 REPOSITION_SECONDS = 0.6
 BOTTLE_DETECT_CM = 70.0     # 이 거리 안에 병이 있으면 돌진
@@ -116,12 +118,12 @@ def wait_for_clear(car, chip, active_high, deadline):
 
 
 def avoid_edge(car, chip, active_high, deadline, detected=None):
-    """엣지 감지 시 정지, 약 10cm 후진 후 중앙을 향해 회전."""
+    """엣지 감지 시 후진 후 빠르게 제자리 한 바퀴 회전한다."""
     left, right = detected if detected is not None else read_edge(chip, active_high)
     if not (left or right):
         return False
     print(f"엣지 감지 (X1={'EDGE' if left else 'clear'}, "
-          f"X4={'EDGE' if right else 'clear'}): 약 10cm 후퇴 후 회전", flush=True)
+          f"X4={'EDGE' if right else 'clear'}): 후진 후 한 바퀴 회전", flush=True)
     car.Car_Stop()
     time.sleep(0.2)  # 전진 정지 후 방향 전환 대기
     if time.monotonic() >= deadline:
@@ -133,12 +135,21 @@ def avoid_edge(car, chip, active_high, deadline, detected=None):
     if not wait_for_clear(car, chip, active_high, deadline):
         return True
 
-    if right and not left:
-        car.Car_Left(TURN_SPEED, TURN_SPEED)
-    else:
-        car.Car_Right(TURN_SPEED, TURN_SPEED)
-    time.sleep(RECOVER_TURN_SECONDS)
-    car.Car_Stop()
+    turn_deadline = min(deadline, time.monotonic() + EDGE_FULL_TURN_SECONDS)
+    if time.monotonic() >= turn_deadline:
+        return True
+    try:
+        if right and not left:
+            car.Car_Left(EDGE_TURN_SPEED, EDGE_TURN_SPEED)
+        else:
+            car.Car_Right(EDGE_TURN_SPEED, EDGE_TURN_SPEED)
+        while time.monotonic() < turn_deadline:
+            if any(read_edge(chip, active_high)):
+                print("회전 중 엣지 감지: 정지", flush=True)
+                break
+            time.sleep(min(EDGE_POLL_SECONDS, max(0, turn_deadline - time.monotonic())))
+    finally:
+        car.Car_Stop()
     return True
 
 
