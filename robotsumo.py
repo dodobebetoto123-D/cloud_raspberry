@@ -27,13 +27,14 @@ def parse_args():
     state.add_argument("--active-high", dest="active_high", action="store_true")
     parser.set_defaults(active_high=False)
     parser.add_argument("--diagnose", action="store_true")
-    parser.add_argument("--max-runtime", type=float, default=115.0)
+    parser.add_argument("--max-runtime", type=float, default=None,
+                        help="선택적 실행 제한 시간(초). 생략하면 경기 시간 무제한, 진단은 30초")
     parser.add_argument("--search-speed", type=int, default=SEARCH_SPEED)
     parser.add_argument("--push-speed", type=int, default=PUSH_SPEED)
     parser.add_argument("--scan-turn-time", type=float, default=SCAN_SECONDS)
     parser.add_argument("--start-gpio", type=int, default=None)
     args = parser.parse_args()
-    if not 0 < args.max_runtime <= TIME_LIMIT_SECONDS:
+    if args.max_runtime is not None and not 0 < args.max_runtime <= TIME_LIMIT_SECONDS:
         parser.error("max-runtime은 0보다 크고 120 이하여야 합니다.")
     if not 0 < args.scan_turn_time <= TIME_LIMIT_SECONDS:
         parser.error("scan-turn-time은 0보다 크고 120 이하여야 합니다.")
@@ -101,7 +102,7 @@ def main():
         sensor = DistanceSensor(echo=ECHO_GPIO, trigger=TRIG_GPIO, max_distance=4)
 
         if args.diagnose:
-            deadline = time.monotonic() + args.max_runtime
+            deadline = time.monotonic() + (args.max_runtime if args.max_runtime is not None else 30.0)
             while time.monotonic() < deadline:
                 left, right = read_edge(chip, args.active_high)
                 distance = read_distance_cm(sensor)
@@ -114,7 +115,8 @@ def main():
             wait_for_start_button(chip, args.start_gpio)
         print("RobotSumo 시작 전 3초 대기", flush=True)
         time.sleep(START_DELAY_SECONDS)
-        deadline = time.monotonic() + args.max_runtime
+        deadline = (float('inf') if args.max_runtime is None
+                    else time.monotonic() + args.max_runtime)
         if not wait_for_clear(car, chip, args.active_high, deadline):
             return
 
